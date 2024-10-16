@@ -1,19 +1,27 @@
 // Realiza o require do express, http, e socketio
 const express = require('express');
-const app = express()
+const app = express();
 // passa o express para o http-server
 const http = require('http').createServer(app);
 // passa o http-server par ao socketio
 const io = require('socket.io')(http);
 
-const redis = require('redis')
+const redis = require('redis');
+const redisConfig = require('./config/redis');
 
+//Monitoramento das filas
+const BullBoard = require('bull-board');
+//Fila
+const Queue = require('./lib/Queue');
+
+//env
+require('dotenv').config();
 
 // Função para obter o contador de senhas do Redis
 const getPasswordCount = async (clientRedis) => {
   const count = await clientRedis.get('passwordCount');
   return count ? parseInt(count) : 0;
-};
+}; 
 
 // Função para incrementar o contador de senhas
 const incrementPasswordCount = async (clientRedis) => {
@@ -21,7 +29,7 @@ const incrementPasswordCount = async (clientRedis) => {
   const newCount = currentCount + 1;
   await clientRedis.set('passwordCount', newCount);
   return newCount;
-};
+}; 
 
 
 
@@ -29,7 +37,7 @@ const incrementPasswordCount = async (clientRedis) => {
 io.on('connection', async (socket) => {
   
 
-  const clientRedis = await redis.createClient({ host: 'localhost', port: 6379 })
+  const clientRedis = await redis.createClient(redisConfig)
     .on('error', err => console.log('Redis Client Error', err))
     .connect();
  
@@ -46,7 +54,10 @@ io.on('connection', async (socket) => {
     }else{
       var senha = await clientRedis.get(token+'_posicao');
     }
-    await clientRedis.disconnect();
+
+    Queue.add('key_ticket',{token,senha})
+    Queue.add('key_notification',{token})
+
     console.log('token',token, senha)
     
     io.emit(`fila_${token}`, `Sua posição é ${senha}° na fila de espera`);
@@ -65,20 +76,26 @@ io.on('connection', async (socket) => {
 
 
   // Quando o cliente se desconecta
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log('\nCliente desconectado');
+    await clientRedis.disconnect();
   });
 });
 
 // Middleware para JSON
 app.use(express.json());
 
+//Setando todas as filas
+//BullBoard.setQueues(Queue.queues.map(queue => queue.bull));
+//Rota monitoramento
+//app.use('/bull', BullBoard.UI); 
+
 // Rota básica HTTP para teste
 app.get('/', (req, res) => {
   res.json({ message: 'API funcionando!' });
 });
 
-
+  
 
 // Inicia o servidor na porta 3000
 const PORT = 3000;
